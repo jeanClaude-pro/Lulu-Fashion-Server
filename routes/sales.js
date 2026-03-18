@@ -561,7 +561,7 @@ router.post("/", authMiddleware, async (req, res) => {
     }
 
     const total = subtotal;
-    const saleId = `SALE-${Date.now()}-${Math.random()
+    const saleId = `Vente-${Date.now()}-${Math.random()
       .toString(36)
       .substr(2, 5)
       .toUpperCase()}`;

@@ -11,12 +11,6 @@ const productSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-    price: {
-      type: Number,
-      required: true,
-      min: 0,
-      default: 0,
-    },
     category: {
       type: String,
       
@@ -61,7 +55,6 @@ const productSchema = new mongoose.Schema(
 productSchema.index({ name: "text", description: "text", brand: "text" });
 //productSchema.index({ category: 1 });
 productSchema.index({ status: 1 });
-productSchema.index({ price: 1 }); // Added index for price for better query performance
 
 // Reuse if it already exists (prevents OverwriteModelError)
 const Product =

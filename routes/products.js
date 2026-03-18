@@ -60,7 +60,6 @@ router.post("/", authMiddleware, isAdmin, async (req, res) => {
     const {
       name,
       description,
-      price, // Added price
       category,
       brand,
       stock,
@@ -71,24 +70,15 @@ router.post("/", authMiddleware, isAdmin, async (req, res) => {
     } = req.body;
 
     // Validate required fields
-    if (!name || !category || price === undefined) {
+    if (!name || !category) {
       return res.status(400).json({
-        error: "Name, category, and price are required fields",
-      });
-    }
-
-    // Validate price is a positive number
-    const parsedPrice = Number(price);
-    if (isNaN(parsedPrice) || parsedPrice < 0) {
-      return res.status(400).json({
-        error: "Price must be a valid positive number",
+        error: "Name and category are required fields",
       });
     }
 
     const product = new Product({
       name,
       description: description || "",
-      price: parsedPrice,
       category,
       brand: brand || "",
       stock: Number(stock) || 0,
@@ -118,7 +108,6 @@ router.put("/:id", authMiddleware, isAdmin, async (req, res) => {
     const {
       name,
       description,
-      price, // Added price
       category,
       brand,
       stock,
@@ -133,16 +122,6 @@ router.put("/:id", authMiddleware, isAdmin, async (req, res) => {
 
     if (name !== undefined) updateData.name = name;
     if (description !== undefined) updateData.description = description;
-    if (price !== undefined) {
-      // Validate price is a positive number
-      const parsedPrice = Number(price);
-      if (isNaN(parsedPrice) || parsedPrice < 0) {
-        return res.status(400).json({
-          error: "Price must be a valid positive number",
-        });
-      }
-      updateData.price = parsedPrice;
-    }
     if (category !== undefined) updateData.category = category;
     if (brand !== undefined) updateData.brand = brand;
     if (stock !== undefined) updateData.stock = Number(stock);
@@ -199,17 +178,10 @@ router.delete("/:id", authMiddleware, isAdmin, async (req, res) => {
   }
 });
 
-// POST /api/products/:id/sell - Special endpoint for selling products with price validation
+// POST /api/products/:id/sell - Special endpoint for selling products
 router.post("/:id/sell", authMiddleware, async (req, res) => {
   try {
-    const { sellingPrice, quantity = 1 } = req.body;
-    
-    // Validate required fields
-    if (sellingPrice === undefined) {
-      return res.status(400).json({ 
-        error: "Selling price is required" 
-      });
-    }
+    const { quantity = 1 } = req.body;
 
     // Find the product
     const product = await Product.findById(req.params.id);
@@ -232,26 +204,6 @@ router.post("/:id/sell", authMiddleware, async (req, res) => {
       });
     }
 
-    // Validate selling price against defined price
-    const parsedSellingPrice = Number(sellingPrice);
-    if (isNaN(parsedSellingPrice) || parsedSellingPrice < 0) {
-      return res.status(400).json({
-        error: "Selling price must be a valid positive number",
-      });
-    }
-
-    // CRITICAL: Check if selling price is less than defined price
-    if (parsedSellingPrice < product.price) {
-      return res.status(400).json({
-        error: `Cannot sell product at a lower price than the defined price of ${product.price}. Selling price must be at least ${product.price}`,
-        definedPrice: product.price,
-        attemptedSellingPrice: parsedSellingPrice
-      });
-    }
-
-    // Calculate total amount
-    const totalAmount = parsedSellingPrice * quantity;
-
     // Update stock (reduce by quantity sold)
     product.stock -= quantity;
     await product.save();
@@ -262,10 +214,7 @@ router.post("/:id/sell", authMiddleware, async (req, res) => {
       saleDetails: {
         productId: product._id,
         productName: product.name,
-        definedPrice: product.price,
-        sellingPrice: parsedSellingPrice,
         quantity: quantity,
-        totalAmount: totalAmount,
         remainingStock: product.stock
       }
     });
@@ -278,52 +227,6 @@ router.post("/:id/sell", authMiddleware, async (req, res) => {
     }
 
     res.status(500).json({ error: "Failed to process sale" });
-  }
-});
-
-// GET /api/products/:id/validate-price/:proposedPrice
-// Helper endpoint to validate a proposed selling price against defined price
-router.get("/:id/validate-price/:proposedPrice", authMiddleware, async (req, res) => {
-  try {
-    const { id, proposedPrice } = req.params;
-    
-    const product = await Product.findById(id);
-    
-    if (!product) {
-      return res.status(404).json({ error: "Product not found" });
-    }
-
-    const parsedProposedPrice = Number(proposedPrice);
-    
-    if (isNaN(parsedProposedPrice) || parsedProposedPrice < 0) {
-      return res.status(400).json({
-        error: "Proposed price must be a valid positive number",
-      });
-    }
-
-    const isValid = parsedProposedPrice >= product.price;
-    const difference = parsedProposedPrice - product.price;
-
-    res.json({
-      productId: product._id,
-      productName: product.name,
-      definedPrice: product.price,
-      proposedPrice: parsedProposedPrice,
-      isValid: isValid,
-      difference: difference,
-      message: isValid 
-        ? "Price is valid for sale" 
-        : `Price must be at least ${product.price} (currently ${Math.abs(difference)} lower)`
-    });
-
-  } catch (error) {
-    console.error("Error validating price:", error);
-    
-    if (error.name === "CastError") {
-      return res.status(400).json({ error: "Invalid product ID" });
-    }
-    
-    res.status(500).json({ error: "Failed to validate price" });
   }
 });
 
