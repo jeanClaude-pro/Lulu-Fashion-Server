@@ -923,6 +923,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
     const total = subtotal;
 
     // Calculate stock adjustments
+    //do a great job
     const stockAdjustments = [];
     
     for (const newItem of enrichedItems) {
