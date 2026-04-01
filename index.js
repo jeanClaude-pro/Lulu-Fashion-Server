@@ -8,14 +8,10 @@ const app = express();
 const printRoutes = require('./routes/print');
 
 // ====== MIDDLEWARE - ORDER MATTERS! ======
-// 1️⃣ FIRST: Parse JSON bodies (req.body must be available for subsequent middleware)
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// 2️⃣ SECOND: HTTP request logging (now req.body is parsed)
 app.use(morgan("combined"));
 
-// 3️⃣ THIRD: CORS configuration
 app.use(cors({
   origin: ['https://lulufashion2.netlify.app', 'http://localhost:3000', 'http://localhost:5000'],
   credentials: true,
@@ -23,7 +19,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// 4️⃣ FOURTH: Debug middleware - now req.body will be populated!
+// Debug middleware
 app.use((req, res, next) => {
   if (req.path.includes("/api/auth/login") || req.path.includes("/api/auth/register")) {
     console.log(`📥 ${req.method} ${req.path}`);
@@ -33,14 +29,21 @@ app.use((req, res, next) => {
   next();
 });
 
-// Env variables
+// Env variables - CHECK BOTH NAMES!
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI;
+const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI; // Try both common names
+
+console.log("=== ENVIRONMENT VARIABLES CHECK ===");
+console.log("PORT:", PORT);
+console.log("MONGO_URI exists:", !!MONGO_URI);
+console.log("MONGO_URI first 20 chars:", MONGO_URI ? MONGO_URI.substring(0, 20) + "..." : "not set");
+console.log("NODE_ENV:", process.env.NODE_ENV || "development");
+console.log("===================================");
 
 // ====== MONGODB CONNECTION OPTIONS ======
 const mongoOptions = {
-  connectTimeoutMS: 60000,      // 60 seconds
-  socketTimeoutMS: 60000,       // 60 seconds
+  connectTimeoutMS: 60000,
+  socketTimeoutMS: 60000,
   serverSelectionTimeoutMS: 60000,
   heartbeatFrequencyMS: 10000,
   retryWrites: true,
@@ -60,18 +63,6 @@ mongoose.connection.on('error', (err) => {
 
 mongoose.connection.on('disconnected', () => {
   console.log('⚠️ MongoDB disconnected');
-});
-
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  try {
-    await mongoose.connection.close();
-    console.log('MongoDB connection closed through app termination');
-    process.exit(0);
-  } catch (err) {
-    console.error('Error during shutdown:', err);
-    process.exit(1);
-  }
 });
 
 // ====== ROUTES ======
@@ -107,29 +98,15 @@ app.get("/health", (req, res) => {
     database: states[dbState],
     uptime: process.uptime(),
     timestamp: new Date(),
-    mongodb_uri_configured: !!MONGO_URI
+    mongodb_uri_configured: !!MONGO_URI,
+    port: PORT
   });
 });
 
-// 404 handler for undefined routes
+// 404 handler
 app.use((req, res) => {
   res.status(404).json({ 
-    message: `Route ${req.method} ${req.path} not found`,
-    available_endpoints: [
-      '/',
-      '/health',
-      '/api/auth/login',
-      '/api/auth/register',
-      '/api/products',
-      '/api/sales',
-      '/api/customers',
-      '/api/users',
-      '/api/categories',
-      '/api/print',
-      '/api/expenses',
-      '/api/exchange-rates',
-      '/api/entries'
-    ]
+    message: `Route ${req.method} ${req.path} not found`
   });
 });
 
@@ -142,39 +119,35 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ====== DB + SERVER STARTUP ======
-const startServer = async () => {
-  try {
-    console.log('⏳ Connecting to MongoDB...');
-    console.log('MONGO_URI exists:', !!MONGO_URI);
-    
-    if (!MONGO_URI) {
-      throw new Error('MONGO_URI is not defined in environment variables');
-    }
-    
-    await mongoose.connect(MONGO_URI, mongoOptions);
-    
-    console.log("✅ Connected to MongoDB Atlas");
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`🌐 Health check: http://localhost:${PORT}/health`);
-    });
-  } catch (err) {
-    console.error("❌ MongoDB connection error:", err.message);
-    console.error("Full error:", err);
-    
-    // Don't exit immediately in development
-    if (process.env.NODE_ENV === 'production') {
-      console.error('Exiting due to database connection failure...');
-      process.exit(1);
-    } else {
-      console.log('⚠️ Running in development mode without database connection');
-      console.log('⚠️ API endpoints requiring database will fail');
-      app.listen(PORT, () => {
-        console.log(`🚀 Server running on port ${PORT} (no database connection)`);
+// ====== START SERVER - MUST BIND TO PORT EVEN IF DB FAILS ======
+const startServer = () => {
+  // Start the server FIRST, then connect to DB
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🌐 Health check: http://localhost:${PORT}/health`);
+  });
+  
+  server.on('error', (err) => {
+    console.error('❌ Server failed to start:', err.message);
+    process.exit(1);
+  });
+  
+  // Then attempt MongoDB connection (don't block server start)
+  if (MONGO_URI) {
+    console.log('⏳ Attempting MongoDB connection...');
+    mongoose.connect(MONGO_URI, mongoOptions)
+      .then(() => {
+        console.log("✅ Connected to MongoDB Atlas");
+      })
+      .catch((err) => {
+        console.error("❌ MongoDB connection error:", err.message);
+        console.error("⚠️ Server is running but database is not connected");
+        console.error("⚠️ Check your MONGO_URI environment variable and MongoDB Atlas IP whitelist");
       });
-    }
+  } else {
+    console.error("❌ MONGO_URI environment variable is not set!");
+    console.error("⚠️ Please set MONGO_URI in your Render environment variables");
   }
 };
 
