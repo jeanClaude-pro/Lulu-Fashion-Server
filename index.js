@@ -13,7 +13,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan("combined"));
 
 app.use(cors({
-  origin: ['https://lulufashion2.netlify.app', 'http://localhost:3000', 'http://localhost:5000'],
+  origin: process.env.CLIENT_URL || '*',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -31,7 +31,7 @@ app.use((req, res, next) => {
 
 // Env variables - CHECK BOTH NAMES!
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI; // Try both common names
+const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 
 console.log("=== ENVIRONMENT VARIABLES CHECK ===");
 console.log("PORT:", PORT);
@@ -42,17 +42,36 @@ console.log("===================================");
 
 // ====== MONGODB CONNECTION OPTIONS ======
 const mongoOptions = {
-  connectTimeoutMS: 60000,
-  socketTimeoutMS: 60000,
-  serverSelectionTimeoutMS: 60000,
+  connectTimeoutMS: 10000,
+  socketTimeoutMS: 45000,
+  serverSelectionTimeoutMS: 10000,
   heartbeatFrequencyMS: 10000,
   retryWrites: true,
   retryReads: true,
   maxPoolSize: 10,
-  minPoolSize: 2
+  minPoolSize: 2,
+  family: 4, // Force IPv4 - fixes connection issues on Render
 };
 
-// MongoDB connection event handlers
+// ====== MONGODB CONNECTION FUNCTION ======
+const connectDB = () => {
+  if (!MONGO_URI) {
+    console.error("❌ MONGO_URI environment variable is not set!");
+    return;
+  }
+  console.log('⏳ Attempting MongoDB connection...');
+  mongoose.connect(MONGO_URI, mongoOptions)
+    .then(() => {
+      console.log("✅ Connected to MongoDB Atlas");
+    })
+    .catch((err) => {
+      console.error("❌ MongoDB connection error:", err.message);
+      console.error("⚠️ Retrying in 5 seconds...");
+      setTimeout(connectDB, 5000);
+    });
+};
+
+// ====== MONGODB EVENT HANDLERS ======
 mongoose.connection.on('connected', () => {
   console.log('✅ MongoDB connected successfully');
 });
@@ -62,7 +81,8 @@ mongoose.connection.on('error', (err) => {
 });
 
 mongoose.connection.on('disconnected', () => {
-  console.log('⚠️ MongoDB disconnected');
+  console.log('⚠️ MongoDB disconnected. Reconnecting in 5 seconds...');
+  setTimeout(connectDB, 5000);
 });
 
 // ====== ROUTES ======
@@ -92,7 +112,7 @@ app.get("/health", (req, res) => {
     2: 'connecting',
     3: 'disconnecting'
   };
-  
+
   res.json({
     status: dbState === 1 ? 'healthy' : 'unhealthy',
     database: states[dbState],
@@ -105,7 +125,7 @@ app.get("/health", (req, res) => {
 
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({ 
+  res.status(404).json({
     message: `Route ${req.method} ${req.path} not found`
   });
 });
@@ -113,42 +133,23 @@ app.use((req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err.message);
-  res.status(500).json({ 
+  res.status(500).json({
     message: 'Internal server error',
     error: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
 
-// ====== START SERVER - MUST BIND TO PORT EVEN IF DB FAILS ======
-const startServer = () => {
-  // Start the server FIRST, then connect to DB
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`🌐 Health check: http://localhost:${PORT}/health`);
-  });
-  
-  server.on('error', (err) => {
-    console.error('❌ Server failed to start:', err.message);
-    process.exit(1);
-  });
-  
-  // Then attempt MongoDB connection (don't block server start)
-  if (MONGO_URI) {
-    console.log('⏳ Attempting MongoDB connection...');
-    mongoose.connect(MONGO_URI, mongoOptions)
-      .then(() => {
-        console.log("✅ Connected to MongoDB Atlas");
-      })
-      .catch((err) => {
-        console.error("❌ MongoDB connection error:", err.message);
-        console.error("⚠️ Server is running but database is not connected");
-        console.error("⚠️ Check your MONGO_URI environment variable and MongoDB Atlas IP whitelist");
-      });
-  } else {
-    console.error("❌ MONGO_URI environment variable is not set!");
-    console.error("⚠️ Please set MONGO_URI in your Render environment variables");
-  }
-};
+// ====== START SERVER ======
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🌐 Health check: http://localhost:${PORT}/health`);
+});
 
-startServer();
+server.on('error', (err) => {
+  console.error('❌ Server failed to start:', err.message);
+  process.exit(1);
+});
+
+// Connect to MongoDB after server starts
+connectDB();
